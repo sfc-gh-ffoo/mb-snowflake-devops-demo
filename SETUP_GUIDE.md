@@ -164,21 +164,61 @@ git branch -M main
 git push -u origin main
 ```
 
-### 3.2 Create Environment File
+### 3.2 Create Environment File (Key-Pair Authentication)
+
+#### Step 1: Generate RSA Key Pair
 
 ```bash
-# Create .env file from template
+# Create directory for keys
+mkdir -p ~/.snowflake
+
+# Generate 2048-bit RSA private key (unencrypted for automation)
+openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out ~/.snowflake/rsa_key.p8 -nocrypt
+
+# Generate public key from private key
+openssl rsa -in ~/.snowflake/rsa_key.p8 -pubout -out ~/.snowflake/rsa_key.pub
+
+# Set secure permissions
+chmod 600 ~/.snowflake/rsa_key.p8
+chmod 644 ~/.snowflake/rsa_key.pub
+
+# Display public key (you'll need this for Snowflake)
+cat ~/.snowflake/rsa_key.pub
+```
+
+#### Step 2: Register Public Key in Snowflake
+
+```sql
+-- Run in Snowflake as ACCOUNTADMIN
+-- Copy the public key content (without BEGIN/END headers)
+
+ALTER USER your_username SET RSA_PUBLIC_KEY='MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...';
+
+-- Verify key is set
+DESC USER your_username;
+```
+
+#### Step 3: Create Environment File
+
+```bash
+# Create .env file with key-pair authentication
 cat > .env << 'EOF'
 # =============================================================================
-# Snowflake Connection Settings
+# Snowflake Connection Settings (Key-Pair Authentication)
 # =============================================================================
 
 # Account identifier (e.g., xy12345.us-east-1)
 SNOWFLAKE_ACCOUNT=your_account_identifier
 
-# Authentication
+# User
 SNOWFLAKE_USER=your_username
-SNOWFLAKE_PASSWORD=your_password
+
+# Key-Pair Authentication (REQUIRED for JWT auth)
+SNOWFLAKE_AUTHENTICATOR=JWT
+SNOWFLAKE_PRIVATE_KEY_PATH=/absolute/path/to/rsa_key.p8
+
+# Optional: If your private key is encrypted with a passphrase
+# SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=your_passphrase
 
 # Default connection settings
 SNOWFLAKE_WAREHOUSE=COMPUTE_WH
@@ -193,10 +233,62 @@ DRY_RUN=true
 EOF
 ```
 
-**Edit `.env` with your actual credentials:**
+> ⚠️ **Important:** Use **absolute paths** for `SNOWFLAKE_PRIVATE_KEY_PATH` (e.g., `/Users/yourname/.snowflake/rsa_key.p8`), not relative paths like `~/.snowflake/`.
+
+**Edit `.env` with your actual values:**
 ```bash
 nano .env  # or use your preferred editor
 ```
+
+#### Step 4: Test Key-Pair Connection
+
+> ⚠️ **Important:** Complete [Section 3.3 Set Up Python Environment](#33-set-up-python-environment) first to install dependencies!
+
+```bash
+# Activate virtual environment (required!)
+source venv/bin/activate
+
+# Load environment variables
+set -a && source .env && set +a
+
+# Test connection with key-pair auth
+python << 'EOF'
+import snowflake.connector
+import os
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
+
+# Read private key
+key_path = os.path.expanduser(os.environ['SNOWFLAKE_PRIVATE_KEY_PATH'])
+with open(key_path, 'rb') as key_file:
+    private_key = serialization.load_pem_private_key(
+        key_file.read(),
+        password=None,
+        backend=default_backend()
+    )
+
+# Get private key bytes
+private_key_bytes = private_key.private_bytes(
+    encoding=serialization.Encoding.DER,
+    format=serialization.PrivateFormat.PKCS8,
+    encryption_algorithm=serialization.NoEncryption()
+)
+
+# Connect using key-pair
+conn = snowflake.connector.connect(
+    account=os.environ['SNOWFLAKE_ACCOUNT'],
+    user=os.environ['SNOWFLAKE_USER'],
+    private_key=private_key_bytes,
+    warehouse=os.environ.get('SNOWFLAKE_WAREHOUSE'),
+    role=os.environ.get('SNOWFLAKE_ROLE')
+)
+print("✅ Key-pair authentication successful!")
+print(f"   Connected as: {conn.cursor().execute('SELECT CURRENT_USER()').fetchone()[0]}")
+conn.close()
+EOF
+```
+
+> **Note:** You'll need to install the cryptography package: `pip install cryptography`
 
 ### 3.3 Set Up Python Environment
 
@@ -244,8 +336,8 @@ terraform init
 Expected output:
 ```
 Initializing provider plugins...
-- Finding snowflake-labs/snowflake versions matching "~> 0.87.0"...
-- Installing snowflake-labs/snowflake v0.87.0...
+- Finding snowflake-labs/snowflake versions matching "~> 0.97.0"...
+- Installing snowflake-labs/snowflake v0.97.0...
 
 Terraform has been successfully initialized!
 ```
@@ -521,23 +613,18 @@ Error: 250001: Could not connect to Snowflake backend
 **Solution:**
 1. Verify account identifier format
 2. Check network connectivity to Snowflake
-3. Verify username/password
-4. Check if your IP is allowed (network policies)
+3. Verify key-pair authentication is configured correctly
+4. Ensure `SNOWFLAKE_AUTHENTICATOR=JWT` is set
+5. Check if your IP is allowed (network policies)
 
 ```bash
-# Test connection
-python3 << 'EOF'
-import snowflake.connector
-import os
+# Verify environment variables are set
+echo "SNOWFLAKE_ACCOUNT=$SNOWFLAKE_ACCOUNT"
+echo "SNOWFLAKE_AUTHENTICATOR=$SNOWFLAKE_AUTHENTICATOR"
+echo "SNOWFLAKE_PRIVATE_KEY_PATH=$SNOWFLAKE_PRIVATE_KEY_PATH"
 
-conn = snowflake.connector.connect(
-    account=os.environ['SNOWFLAKE_ACCOUNT'],
-    user=os.environ['SNOWFLAKE_USER'],
-    password=os.environ['SNOWFLAKE_PASSWORD']
-)
-print("✅ Connection successful!")
-conn.close()
-EOF
+# Reload environment if needed
+set -a && source .env && set +a
 ```
 
 #### Issue: GitHub Actions fails with "secret not found"
@@ -575,25 +662,47 @@ USE ROLE ACCOUNTADMIN;
 ## Quick Reference Commands
 
 ```bash
-# Terraform
+# Initial Setup (run once)
+cd /Users/ffoo/mb-snowflake-devops-demo
+source venv/bin/activate
+set -a && source .env && set +a
+
+# Terraform Commands
 make init                 # Initialize Terraform
 make plan                 # Plan dev environment
 make plan-staging         # Plan staging environment
+make plan-prod            # Plan prod environment
 make apply                # Apply dev environment
+make apply-staging        # Apply staging environment
+make apply-prod           # Apply prod environment
 make destroy              # Destroy dev environment
 make fmt                  # Format Terraform files
 make validate             # Validate configuration
 
-# SQL Objects
+# Direct Terraform (alternative to make)
+cd terraform
+terraform init
+terraform plan -var-file="environments/dev.tfvars"
+terraform apply -var-file="environments/dev.tfvars"
+
+# SQL Objects Deployment
 make deploy-objects       # Deploy Snowflake objects
 make lint                 # Lint SQL files
 
-# Python Setup
+# Or run directly
+python scripts/deploy_objects.py
+
+# Python Setup (run once)
 make setup                # Setup Python virtual environment
 
 # GitHub Workflows (via CLI)
 gh workflow run "Terraform Apply" --field environment=dev
 gh workflow run "Deploy Snowflake Objects" --field environment=dev --field dry_run=true
+
+# Git Commands
+git status
+gh pr list
+gh run list
 ```
 
 ---
@@ -605,6 +714,16 @@ gh workflow run "Deploy Snowflake Objects" --field environment=dev --field dry_r
 3. 🔐 Set up key-pair authentication for production
 4. 🛡️ Configure GitHub environment protection rules
 5. 📊 Load your data and start using the analytics views
+
+---
+
+## 📖 Related Documentation
+
+| Document | Description |
+|----------|-------------|
+| [DEMO_GUIDE.md](DEMO_GUIDE.md) | Presentation script for demos |
+| [README.md](README.md) | Project overview |
+| `terraform/environments/*.tfvars` | Environment configurations |
 
 ---
 

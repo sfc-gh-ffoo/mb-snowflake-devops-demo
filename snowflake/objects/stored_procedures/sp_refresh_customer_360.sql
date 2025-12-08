@@ -93,8 +93,5 @@ BEGIN
     
     RETURN v_message;
 END;
-$$;
-
--- Grant execute permission
-GRANT USAGE ON PROCEDURE MARTS.SP_REFRESH_CUSTOMER_360() TO ROLE {{ROLE_PREFIX}}_ENGINEER;
+$$
 

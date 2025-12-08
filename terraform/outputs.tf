@@ -26,7 +26,7 @@ output "warehouses" {
 output "roles" {
   description = "Created Snowflake roles"
   value = {
-    for k, v in snowflake_role.roles : k => {
+    for k, v in snowflake_account_role.roles : k => {
       name = v.name
     }
   }
@@ -53,12 +53,12 @@ output "resource_monitor" {
 output "environment_summary" {
   description = "Summary of deployed environment"
   value = {
-    environment    = var.environment
-    project        = var.project_name
-    database_count = length(snowflake_database.databases)
-    schema_count   = length(snowflake_schema.schemas)
+    environment     = var.environment
+    project         = var.project_name
+    database_count  = length(snowflake_database.databases)
+    schema_count    = length(snowflake_schema.schemas)
     warehouse_count = length(snowflake_warehouse.warehouses)
-    role_count     = length(snowflake_role.roles)
+    role_count      = length(snowflake_account_role.roles)
   }
 }
 

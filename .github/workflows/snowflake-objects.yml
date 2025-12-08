@@ -1,6 +1,6 @@
 # =============================================================================
-# MAYBANK SNOWFLAKE DEVOPS DEMO
-# Snowflake Objects Deployment (Stored Procedures, Views, etc.)
+# MB SNOWFLAKE DEVOPS DEMO
+# Snowflake Objects Deployment (SQL Migrations, Views, Stored Procedures)
 # =============================================================================
 
 name: "Deploy Snowflake Objects"
@@ -30,13 +30,13 @@ on:
           - staging
           - prod
       dry_run:
-        description: 'Dry run (show changes only)'
+        description: 'Dry run (validate only, no deployment)'
         required: true
         default: true
         type: boolean
 
 env:
-  PYTHON_VERSION: "3.11"
+  SNOWSQL_VERSION: "1.2.32"
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -52,17 +52,19 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: "3.11"
 
       - name: Install sqlfluff
-        run: pip install sqlfluff sqlfluff-templater-jinja
+        run: pip install sqlfluff
 
       - name: Lint SQL files
         run: |
+          echo "## SQL Linting Results" >> $GITHUB_STEP_SUMMARY
           sqlfluff lint snowflake/ \
             --dialect snowflake \
             --exclude-rules L016,L031 \
-            || true
+            --format github-annotation || true
+          echo "✅ SQL validation completed" >> $GITHUB_STEP_SUMMARY
 
   # ---------------------------------------------------------------------------
   # Deploy Database Objects
@@ -71,40 +73,103 @@ jobs:
     name: "Deploy Objects"
     runs-on: ubuntu-latest
     needs: validate
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false')
     environment: ${{ github.event.inputs.environment || 'dev' }}
     
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install Dependencies
+      - name: Install SnowSQL
         run: |
-          pip install snowflake-connector-python
-          pip install PyYAML
+          curl -O https://sfc-repo.snowflakecomputing.com/snowsql/bootstrap/1.2/linux_x86_64/snowsql-${SNOWSQL_VERSION}-linux_x86_64.bash
+          SNOWSQL_DEST=~/bin SNOWSQL_LOGIN_SHELL=~/.profile bash snowsql-${SNOWSQL_VERSION}-linux_x86_64.bash
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: Configure SnowSQL
+        run: |
+          mkdir -p ~/.snowsql
+          cat > ~/.snowsql/config << EOF
+          [connections]
+          accountname = ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          username = ${{ secrets.SNOWFLAKE_USER }}
+          password = ${{ secrets.SNOWFLAKE_PASSWORD }}
+          warehousename = ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          dbname = ${{ secrets.SNOWFLAKE_DATABASE }}
+          rolename = ${{ secrets.SNOWFLAKE_ROLE }}
+          EOF
+          chmod 600 ~/.snowsql/config
+
+      - name: Set Environment Variables
+        run: |
+          ENV="${{ github.event.inputs.environment || 'dev' }}"
+          PREFIX="MB_DEMO_${ENV^^}"
+          echo "ENV_PREFIX=${PREFIX}" >> $GITHUB_ENV
+          echo "DATABASE=${PREFIX}_ANALYTICS" >> $GITHUB_ENV
+          echo "WAREHOUSE=${PREFIX}_ETL_WH" >> $GITHUB_ENV
 
       - name: Deploy Migrations
-        env:
-          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
-          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
-          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
-          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
-          SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
-          SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
-          ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
-          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
-        run: python scripts/deploy_objects.py
-
-      - name: Generate Report
         run: |
-          echo "## Snowflake Objects Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "## Deploying Migrations" >> $GITHUB_STEP_SUMMARY
+          echo "Database: ${{ env.DATABASE }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          
+          for file in snowflake/migrations/*.sql; do
+            if [ -f "$file" ]; then
+              echo "Deploying: $(basename $file)"
+              echo "- Deploying: \`$(basename $file)\`" >> $GITHUB_STEP_SUMMARY
+              
+              # Replace placeholders and execute
+              sed -e "s/{{WAREHOUSE_NAME}}/${{ env.WAREHOUSE }}/g" \
+                  -e "s/{{DATABASE_NAME}}/${{ env.DATABASE }}/g" \
+                  -e "s/{{ROLE_PREFIX}}/${{ env.ENV_PREFIX }}/g" \
+                  "$file" | \
+              ~/bin/snowsql -d "${{ env.DATABASE }}" -w "${{ env.WAREHOUSE }}" -o exit_on_error=true -o quiet=true
+            fi
+          done
+
+      - name: Deploy Stored Procedures
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Deploying Stored Procedures" >> $GITHUB_STEP_SUMMARY
+          
+          for file in snowflake/objects/stored_procedures/*.sql; do
+            if [ -f "$file" ]; then
+              echo "Deploying: $(basename $file)"
+              echo "- Deploying: \`$(basename $file)\`" >> $GITHUB_STEP_SUMMARY
+              
+              sed -e "s/{{WAREHOUSE_NAME}}/${{ env.WAREHOUSE }}/g" \
+                  -e "s/{{DATABASE_NAME}}/${{ env.DATABASE }}/g" \
+                  -e "s/{{ROLE_PREFIX}}/${{ env.ENV_PREFIX }}/g" \
+                  "$file" | \
+              ~/bin/snowsql -d "${{ env.DATABASE }}" -w "${{ env.WAREHOUSE }}" -o exit_on_error=true -o quiet=true
+            fi
+          done
+
+      - name: Deploy Views
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Deploying Views" >> $GITHUB_STEP_SUMMARY
+          
+          for file in snowflake/objects/views/*.sql; do
+            if [ -f "$file" ]; then
+              echo "Deploying: $(basename $file)"
+              echo "- Deploying: \`$(basename $file)\`" >> $GITHUB_STEP_SUMMARY
+              
+              sed -e "s/{{WAREHOUSE_NAME}}/${{ env.WAREHOUSE }}/g" \
+                  -e "s/{{DATABASE_NAME}}/${{ env.DATABASE }}/g" \
+                  -e "s/{{ROLE_PREFIX}}/${{ env.ENV_PREFIX }}/g" \
+                  "$file" | \
+              ~/bin/snowsql -d "${{ env.DATABASE }}" -w "${{ env.WAREHOUSE }}" -o exit_on_error=true -o quiet=true
+            fi
+          done
+
+      - name: Deployment Summary
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Deployment completed successfully**" >> $GITHUB_STEP_SUMMARY
           echo "- **Environment**: ${{ github.event.inputs.environment || 'dev' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Dry Run**: ${{ github.event.inputs.dry_run || 'false' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Database**: ${{ env.DATABASE }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Triggered by**: @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
 

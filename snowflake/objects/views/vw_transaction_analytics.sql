@@ -119,8 +119,5 @@ SELECT
     LAG(SUM(total_amount_myr), 7) OVER (ORDER BY summary_date) AS wow_volume
 FROM MARTS.DAILY_TRANSACTION_SUMMARY
 GROUP BY summary_date
-ORDER BY summary_date DESC;
-
--- Grant access to views
-GRANT SELECT ON ALL VIEWS IN SCHEMA MARTS TO ROLE {{ROLE_PREFIX}}_ANALYST;
+ORDER BY summary_date DESC
 

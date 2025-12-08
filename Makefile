@@ -3,7 +3,7 @@
 # Makefile for common operations
 # =============================================================================
 
-.PHONY: help init plan apply destroy fmt validate lint deploy-objects
+.PHONY: help init plan apply destroy fmt validate lint deploy-objects setup
 
 # Default target
 help:
@@ -16,16 +16,18 @@ help:
 	@echo "  make plan-staging  - Plan changes (staging environment)"
 	@echo "  make plan-prod     - Plan changes (prod environment)"
 	@echo "  make apply         - Apply changes (dev environment)"
+	@echo "  make apply-staging - Apply changes (staging environment)"
+	@echo "  make apply-prod    - Apply changes (prod environment)"
 	@echo "  make destroy       - Destroy resources (dev environment)"
 	@echo "  make fmt           - Format Terraform files"
 	@echo "  make validate      - Validate Terraform configuration"
 	@echo ""
 	@echo "SQL Commands:"
-	@echo "  make lint          - Lint SQL files"
-	@echo "  make deploy-objects - Deploy Snowflake objects"
+	@echo "  make lint          - Lint SQL files with sqlfluff"
+	@echo "  make deploy-objects - Deploy Snowflake objects (migrations, views, procedures)"
 	@echo ""
 	@echo "Setup Commands:"
-	@echo "  make setup         - Setup Python environment"
+	@echo "  make setup         - Setup Python virtual environment"
 	@echo ""
 
 # Terraform commands
@@ -68,7 +70,7 @@ deploy-objects:
 
 # Setup commands
 setup:
-	python -m venv venv
+	python3 -m venv venv
 	. venv/bin/activate && pip install -r requirements.txt
 	@echo ""
 	@echo "Setup complete! Activate with: source venv/bin/activate"
