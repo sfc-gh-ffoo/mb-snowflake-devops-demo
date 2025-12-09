@@ -121,3 +121,4 @@ FROM MARTS.DAILY_TRANSACTION_SUMMARY
 GROUP BY summary_date
 ORDER BY summary_date DESC
 
+-- Demo change

@@ -16,7 +16,7 @@ A step-by-step presentation script for demonstrating Snowflake DevOps capabiliti
 
 1. **Infrastructure as Code** - Provisioning Snowflake resources with Terraform
 2. **Environment Management** - Dev/Staging/Prod configurations
-3. **Database Object Deployment** - Automated SQL migrations and views
+3. **Database Object Deployment** - Automated DDL scripts and views
 4. **CI/CD Pipelines** - GitHub Actions for automated deployments
 5. **Live Deployment** - Real-time infrastructure changes
 
@@ -69,7 +69,7 @@ mb-snowflake-devops-demo/
 │   ├── main.tf            ← Resource definitions
 │   └── providers.tf       ← Snowflake connection
 ├── snowflake/             ← Database objects (SQL)
-│   ├── migrations/        ← Versioned schema changes
+│   ├── ddl/               ← Versioned DDL scripts
 │   └── objects/           ← Views, stored procedures
 ├── .github/workflows/     ← CI/CD automation
 └── scripts/               ← Deployment utilities
@@ -150,9 +150,9 @@ SHOW ROLES LIKE 'MB_DEMO%';
 #### 3.1 Show Migration Files
 
 ```bash
-# Display versioned migrations
-ls -la snowflake/migrations/
-cat snowflake/migrations/V001__initial_schema_setup.sql | head -50
+# Display versioned DDL scripts
+ls -la snowflake/ddl/
+cat snowflake/ddl/V001__initial_schema_setup.sql | head -50
 ```
 
 **Explain:**
@@ -187,7 +187,7 @@ python scripts/deploy_objects.py
 ```
 
 **Explain:**
-> *"The script connects to Snowflake, runs migrations in order, then deploys stored procedures and views. All automated, all logged."*
+> *"The script connects to Snowflake, runs DDL scripts in order, then deploys stored procedures and views. All automated, all logged."*
 
 ---
 
@@ -379,7 +379,7 @@ gh run list
 **Q: What about existing Snowflake resources?**
 > Terraform can import existing resources. We can gradually bring existing infrastructure under management.
 
-**Q: How do you handle database migrations in production?**
+**Q: How do you handle database schema changes in production?**
 > Migrations are versioned and tested in Dev/Staging first. Production deployments require approval and can be rolled back.
 
 **Q: What's the learning curve?**

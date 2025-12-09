@@ -53,11 +53,11 @@ warehouses = [
     auto_suspend        = 120
     auto_resume         = true
     min_cluster_count   = 1
-    max_cluster_count   = 2
+    max_cluster_count   = 3
     scaling_policy      = "STANDARD"
     initially_suspended = true
     resource_monitor    = ""
-    comment             = "Analytics workload warehouse"
+    comment             = "Analytics workload warehouse - Updated for CI/CD test"
   },
   {
     name                = "etl"

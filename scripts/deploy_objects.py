@@ -230,39 +230,39 @@ class SnowflakeDeployer:
             print(f"  ❌ Error: {e}")
             return False
 
-    def deploy_migrations(self):
-        """Deploy versioned migrations."""
+    def deploy_ddl(self):
+        """Deploy versioned DDL scripts."""
         print("\n" + "="*60)
-        print("DEPLOYING MIGRATIONS")
+        print("DEPLOYING DDL SCRIPTS")
         print("="*60)
         
-        migrations_path = self.base_path / "migrations"
+        ddl_path = self.base_path / "ddl"
         
-        if not migrations_path.exists():
-            print("No migrations directory found")
+        if not ddl_path.exists():
+            print("No ddl directory found")
             return
         
-        # Get migration files sorted by version
-        migration_files = sorted(migrations_path.glob("V*.sql"))
+        # Get DDL files sorted by version
+        ddl_files = sorted(ddl_path.glob("V*.sql"))
         
-        if not migration_files:
-            print("No migration files found")
+        if not ddl_files:
+            print("No DDL files found")
             return
         
-        print(f"Found {len(migration_files)} migration(s)\n")
+        print(f"Found {len(ddl_files)} DDL script(s)\n")
         
-        for migration_file in migration_files:
-            print(f"\n📄 Processing: {migration_file.name}")
+        for ddl_file in ddl_files:
+            print(f"\n📄 Processing: {ddl_file.name}")
             
-            with open(migration_file, 'r') as f:
+            with open(ddl_file, 'r') as f:
                 sql_content = f.read()
             
-            success = self._execute_sql(sql_content, migration_file.name)
+            success = self._execute_sql(sql_content, ddl_file.name)
             
             if success:
-                print(f"✅ Migration completed: {migration_file.name}")
+                print(f"✅ DDL completed: {ddl_file.name}")
             else:
-                print(f"❌ Migration failed: {migration_file.name}")
+                print(f"❌ DDL failed: {ddl_file.name}")
                 if not self.dry_run:
                     sys.exit(1)
 
@@ -345,8 +345,8 @@ class SnowflakeDeployer:
         try:
             self.connect()
             
-            # Deploy in order: migrations -> stored procedures -> views
-            self.deploy_migrations()
+            # Deploy in order: DDL -> stored procedures -> views
+            self.deploy_ddl()
             self.deploy_stored_procedures()
             self.deploy_views()
             

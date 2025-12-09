@@ -108,13 +108,13 @@ jobs:
           echo "DATABASE=${PREFIX}_ANALYTICS" >> $GITHUB_ENV
           echo "WAREHOUSE=${PREFIX}_ETL_WH" >> $GITHUB_ENV
 
-      - name: Deploy Migrations
+      - name: Deploy DDL Scripts
         run: |
-          echo "## Deploying Migrations" >> $GITHUB_STEP_SUMMARY
+          echo "## Deploying DDL Scripts" >> $GITHUB_STEP_SUMMARY
           echo "Database: ${{ env.DATABASE }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          for file in snowflake/migrations/*.sql; do
+          for file in snowflake/ddl/*.sql; do
             if [ -f "$file" ]; then
               echo "Deploying: $(basename $file)"
               echo "- Deploying: \`$(basename $file)\`" >> $GITHUB_STEP_SUMMARY

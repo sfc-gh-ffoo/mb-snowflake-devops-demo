@@ -24,7 +24,7 @@ help:
 	@echo ""
 	@echo "SQL Commands:"
 	@echo "  make lint          - Lint SQL files with sqlfluff"
-	@echo "  make deploy-objects - Deploy Snowflake objects (migrations, views, procedures)"
+	@echo "  make deploy-objects - Deploy Snowflake objects (DDL, views, procedures)"
 	@echo ""
 	@echo "Setup Commands:"
 	@echo "  make setup         - Setup Python virtual environment"
