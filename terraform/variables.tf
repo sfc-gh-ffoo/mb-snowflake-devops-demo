@@ -55,16 +55,16 @@ variable "databases" {
 variable "warehouses" {
   description = "List of warehouses to create"
   type = list(object({
-    name                         = string
-    size                         = string
-    auto_suspend                 = number
-    auto_resume                  = bool
-    min_cluster_count            = number
-    max_cluster_count            = number
-    scaling_policy               = string
-    initially_suspended          = bool
-    resource_monitor             = string
-    comment                      = string
+    name                = string
+    size                = string
+    auto_suspend        = number
+    auto_resume         = bool
+    min_cluster_count   = number
+    max_cluster_count   = number
+    scaling_policy      = string
+    initially_suspended = bool
+    resource_monitor    = string
+    comment             = string
   }))
   default = []
 }

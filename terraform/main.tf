@@ -37,15 +37,15 @@ resource "snowflake_schema" "schemas" {
 resource "snowflake_warehouse" "warehouses" {
   for_each = { for wh in var.warehouses : wh.name => wh }
 
-  name                         = "${local.name_prefix}_${upper(each.value.name)}_WH"
-  warehouse_size               = each.value.size
-  auto_suspend                 = each.value.auto_suspend
-  auto_resume                  = each.value.auto_resume
-  min_cluster_count            = each.value.min_cluster_count
-  max_cluster_count            = each.value.max_cluster_count
-  scaling_policy               = each.value.scaling_policy
-  initially_suspended          = each.value.initially_suspended
-  comment                      = each.value.comment
+  name                = "${local.name_prefix}_${upper(each.value.name)}_WH"
+  warehouse_size      = each.value.size
+  auto_suspend        = each.value.auto_suspend
+  auto_resume         = each.value.auto_resume
+  min_cluster_count   = each.value.min_cluster_count
+  max_cluster_count   = each.value.max_cluster_count
+  scaling_policy      = each.value.scaling_policy
+  initially_suspended = each.value.initially_suspended
+  comment             = each.value.comment
 }
 
 # -----------------------------------------------------------------------------
@@ -100,9 +100,9 @@ resource "snowflake_resource_monitor" "main" {
   frequency       = "MONTHLY"
   start_timestamp = "IMMEDIATELY"
 
-  notify_triggers            = [75, 90, 100]
-  suspend_trigger            = 100
-  suspend_immediate_trigger  = 110
+  notify_triggers           = [75, 90, 100]
+  suspend_trigger           = 100
+  suspend_immediate_trigger = 110
 
   notify_users = []
 }
