@@ -30,6 +30,12 @@ variable "snowflake_role" {
   default     = "ACCOUNTADMIN"
 }
 
+variable "snowflake_private_key_path" {
+  description = "Path to RSA private key for key-pair authentication (leave empty for password auth)"
+  type        = string
+  default     = ""
+}
+
 # -----------------------------------------------------------------------------
 # Database Configuration
 # -----------------------------------------------------------------------------

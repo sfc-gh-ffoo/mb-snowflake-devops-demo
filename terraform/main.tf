@@ -49,9 +49,9 @@ resource "snowflake_warehouse" "warehouses" {
 }
 
 # -----------------------------------------------------------------------------
-# Roles
+# Roles (using account_role for newer provider versions)
 # -----------------------------------------------------------------------------
-resource "snowflake_role" "roles" {
+resource "snowflake_account_role" "roles" {
   for_each = { for role in var.roles : role.name => role }
 
   name    = "${local.name_prefix}_${upper(each.value.name)}"
@@ -61,33 +61,33 @@ resource "snowflake_role" "roles" {
 # -----------------------------------------------------------------------------
 # Role Grants - Database Access
 # -----------------------------------------------------------------------------
-resource "snowflake_grant_privileges_to_role" "database_usage" {
+resource "snowflake_grant_privileges_to_account_role" "database_usage" {
   for_each = { for role in var.roles : role.name => role }
 
-  privileges = ["USAGE"]
-  role_name  = snowflake_role.roles[each.key].name
+  privileges        = ["USAGE"]
+  account_role_name = snowflake_account_role.roles[each.key].name
   on_account_object {
     object_type = "DATABASE"
     object_name = snowflake_database.databases["analytics"].name
   }
 
-  depends_on = [snowflake_role.roles, snowflake_database.databases]
+  depends_on = [snowflake_account_role.roles, snowflake_database.databases]
 }
 
 # -----------------------------------------------------------------------------
 # Role Grants - Warehouse Access
 # -----------------------------------------------------------------------------
-resource "snowflake_grant_privileges_to_role" "warehouse_usage" {
+resource "snowflake_grant_privileges_to_account_role" "warehouse_usage" {
   for_each = { for role in var.roles : role.name => role }
 
-  privileges = ["USAGE"]
-  role_name  = snowflake_role.roles[each.key].name
+  privileges        = ["USAGE"]
+  account_role_name = snowflake_account_role.roles[each.key].name
   on_account_object {
     object_type = "WAREHOUSE"
     object_name = snowflake_warehouse.warehouses["analytics"].name
   }
 
-  depends_on = [snowflake_role.roles, snowflake_warehouse.warehouses]
+  depends_on = [snowflake_account_role.roles, snowflake_warehouse.warehouses]
 }
 
 # -----------------------------------------------------------------------------
@@ -107,3 +107,4 @@ resource "snowflake_resource_monitor" "main" {
   notify_users = []
 }
 
+# Test

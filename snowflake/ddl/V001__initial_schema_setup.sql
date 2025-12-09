@@ -5,6 +5,13 @@
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
+-- Ensure Schemas Exist (idempotent)
+-- -----------------------------------------------------------------------------
+CREATE SCHEMA IF NOT EXISTS RAW COMMENT = 'Raw data landing zone';
+CREATE SCHEMA IF NOT EXISTS TRANSFORMED COMMENT = 'Cleansed and validated data';
+CREATE SCHEMA IF NOT EXISTS MARTS COMMENT = 'Business-ready data marts';
+
+-- -----------------------------------------------------------------------------
 -- RAW Schema - Landing Zone Tables
 -- -----------------------------------------------------------------------------
 

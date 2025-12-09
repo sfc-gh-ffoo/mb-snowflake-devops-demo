@@ -71,7 +71,8 @@ AS
     );
 
 -- Task to update daily summary (runs after transaction processing)
-CREATE OR REPLACE TASK MARTS.UPDATE_DAILY_SUMMARY_TASK
+-- Note: Must be in same schema as predecessor task
+CREATE OR REPLACE TASK TRANSFORMED.UPDATE_DAILY_SUMMARY_TASK
     WAREHOUSE = '{{WAREHOUSE_NAME}}'
     AFTER TRANSFORMED.PROCESS_TRANSACTIONS_TASK
 AS
@@ -107,8 +108,4 @@ AS
     ) VALUES (
         src.summary_date, src.customer_segment, src.transaction_type, src.channel,
         src.total_transactions, src.total_amount_myr, src.avg_amount_myr, src.unique_customers
-    );
-
--- Note: Tasks are created in SUSPENDED state by default
--- Enable them in production with: ALTER TASK <task_name> RESUME;
-
+    )

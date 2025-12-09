@@ -164,21 +164,61 @@ git branch -M main
 git push -u origin main
 ```
 
-### 3.2 Create Environment File
+### 3.2 Create Environment File (Key-Pair Authentication)
+
+#### Step 1: Generate RSA Key Pair
 
 ```bash
-# Create .env file from template
+# Create directory for keys
+mkdir -p ~/.snowflake
+
+# Generate 2048-bit RSA private key (unencrypted for automation)
+openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out ~/.snowflake/rsa_key.p8 -nocrypt
+
+# Generate public key from private key
+openssl rsa -in ~/.snowflake/rsa_key.p8 -pubout -out ~/.snowflake/rsa_key.pub
+
+# Set secure permissions
+chmod 600 ~/.snowflake/rsa_key.p8
+chmod 644 ~/.snowflake/rsa_key.pub
+
+# Display public key (you'll need this for Snowflake)
+cat ~/.snowflake/rsa_key.pub
+```
+
+#### Step 2: Register Public Key in Snowflake
+
+```sql
+-- Run in Snowflake as ACCOUNTADMIN
+-- Copy the public key content (without BEGIN/END headers)
+
+ALTER USER your_username SET RSA_PUBLIC_KEY='MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...';
+
+-- Verify key is set
+DESC USER your_username;
+```
+
+#### Step 3: Create Environment File
+
+```bash
+# Create .env file with key-pair authentication
 cat > .env << 'EOF'
 # =============================================================================
-# Snowflake Connection Settings
+# Snowflake Connection Settings (Key-Pair Authentication)
 # =============================================================================
 
 # Account identifier (e.g., xy12345.us-east-1)
 SNOWFLAKE_ACCOUNT=your_account_identifier
 
-# Authentication
+# User
 SNOWFLAKE_USER=your_username
-SNOWFLAKE_PASSWORD=your_password
+
+# Key-Pair Authentication (REQUIRED for JWT auth)
+SNOWFLAKE_AUTHENTICATOR=JWT
+SNOWFLAKE_PRIVATE_KEY_PATH=/absolute/path/to/rsa_key.p8
+
+# Optional: If your private key is encrypted with a passphrase
+# SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=your_passphrase
 
 # Default connection settings
 SNOWFLAKE_WAREHOUSE=COMPUTE_WH
@@ -193,10 +233,62 @@ DRY_RUN=true
 EOF
 ```
 
-**Edit `.env` with your actual credentials:**
+> ⚠️ **Important:** Use **absolute paths** for `SNOWFLAKE_PRIVATE_KEY_PATH` (e.g., `/Users/yourname/.snowflake/rsa_key.p8`), not relative paths like `~/.snowflake/`.
+
+**Edit `.env` with your actual values:**
 ```bash
 nano .env  # or use your preferred editor
 ```
+
+#### Step 4: Test Key-Pair Connection
+
+> ⚠️ **Important:** Complete [Section 3.3 Set Up Python Environment](#33-set-up-python-environment) first to install dependencies!
+
+```bash
+# Activate virtual environment (required!)
+source venv/bin/activate
+
+# Load environment variables
+set -a && source .env && set +a
+
+# Test connection with key-pair auth
+python << 'EOF'
+import snowflake.connector
+import os
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
+
+# Read private key
+key_path = os.path.expanduser(os.environ['SNOWFLAKE_PRIVATE_KEY_PATH'])
+with open(key_path, 'rb') as key_file:
+    private_key = serialization.load_pem_private_key(
+        key_file.read(),
+        password=None,
+        backend=default_backend()
+    )
+
+# Get private key bytes
+private_key_bytes = private_key.private_bytes(
+    encoding=serialization.Encoding.DER,
+    format=serialization.PrivateFormat.PKCS8,
+    encryption_algorithm=serialization.NoEncryption()
+)
+
+# Connect using key-pair
+conn = snowflake.connector.connect(
+    account=os.environ['SNOWFLAKE_ACCOUNT'],
+    user=os.environ['SNOWFLAKE_USER'],
+    private_key=private_key_bytes,
+    warehouse=os.environ.get('SNOWFLAKE_WAREHOUSE'),
+    role=os.environ.get('SNOWFLAKE_ROLE')
+)
+print("✅ Key-pair authentication successful!")
+print(f"   Connected as: {conn.cursor().execute('SELECT CURRENT_USER()').fetchone()[0]}")
+conn.close()
+EOF
+```
+
+> **Note:** You'll need to install the cryptography package: `pip install cryptography`
 
 ### 3.3 Set Up Python Environment
 
@@ -244,8 +336,8 @@ terraform init
 Expected output:
 ```
 Initializing provider plugins...
-- Finding snowflake-labs/snowflake versions matching "~> 0.87.0"...
-- Installing snowflake-labs/snowflake v0.87.0...
+- Finding snowflake-labs/snowflake versions matching "~> 0.97.0"...
+- Installing snowflake-labs/snowflake v0.97.0...
 
 Terraform has been successfully initialized!
 ```
@@ -293,6 +385,53 @@ terraform apply -var-file="environments/dev.tfvars"
 
 Type `yes` when prompted to confirm.
 
+### 4.6 Terraform State Management (Important!)
+
+> ⚠️ **Current Setup:** This demo uses a single local state file for simplicity. In production, each environment should have separate state.
+
+#### Option A: Separate State Files (Recommended for Production)
+
+```bash
+# Development
+terraform apply -var-file="environments/dev.tfvars" -state="terraform-dev.tfstate"
+
+# Staging  
+terraform apply -var-file="environments/staging.tfvars" -state="terraform-staging.tfstate"
+
+# Production
+terraform apply -var-file="environments/prod.tfvars" -state="terraform-prod.tfstate"
+```
+
+#### Option B: Terraform Workspaces
+
+```bash
+# Create workspaces
+terraform workspace new dev
+terraform workspace new staging
+terraform workspace new prod
+
+# Switch and apply
+terraform workspace select dev
+terraform apply -var-file="environments/dev.tfvars"
+
+terraform workspace select staging
+terraform apply -var-file="environments/staging.tfvars"
+```
+
+#### Option C: Remote Backend (Best Practice)
+
+For team collaboration, use a remote backend like S3, Azure Blob, or Terraform Cloud. Update `providers.tf`:
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket = "your-terraform-state-bucket"
+    key    = "snowflake/dev/terraform.tfstate"  # Change per environment
+    region = "us-east-1"
+  }
+}
+```
+
 ---
 
 ## 5. GitHub Actions Setup
@@ -311,7 +450,7 @@ git push -u origin main
 
 Navigate to: **Repository → Settings → Secrets and variables → Actions → New repository secret**
 
-Add the following secrets:
+#### Option A: Password Authentication (Simple)
 
 | Secret Name | Description | Example Value |
 |-------------|-------------|---------------|
@@ -322,9 +461,8 @@ Add the following secrets:
 | `SNOWFLAKE_DATABASE` | Target database | `MB_DEMO_DEV_ANALYTICS` |
 | `SNOWFLAKE_ROLE` | Deployment role | `ACCOUNTADMIN` |
 
-**Using GitHub CLI:**
 ```bash
-# Set secrets via CLI
+# Set secrets via CLI (password auth)
 gh secret set SNOWFLAKE_ACCOUNT --body "xy12345.us-east-1"
 gh secret set SNOWFLAKE_USER --body "svc_devops_terraform"
 gh secret set SNOWFLAKE_PASSWORD --body "YourSecurePassword123!"
@@ -332,6 +470,32 @@ gh secret set SNOWFLAKE_WAREHOUSE --body "COMPUTE_WH"
 gh secret set SNOWFLAKE_DATABASE --body "MB_DEMO_DEV_ANALYTICS"
 gh secret set SNOWFLAKE_ROLE --body "ACCOUNTADMIN"
 ```
+
+#### Option B: Key-Pair Authentication (Recommended for Production)
+
+| Secret Name | Description | Example Value |
+|-------------|-------------|---------------|
+| `SNOWFLAKE_ACCOUNT` | Account identifier | `xy12345.us-east-1` |
+| `SNOWFLAKE_USER` | Service account username | `svc_devops_terraform` |
+| `SNOWFLAKE_PRIVATE_KEY` | Private key content (base64) | See below |
+| `SNOWFLAKE_WAREHOUSE` | Default warehouse | `COMPUTE_WH` |
+| `SNOWFLAKE_DATABASE` | Target database | `MB_DEMO_DEV_ANALYTICS` |
+| `SNOWFLAKE_ROLE` | Deployment role | `ACCOUNTADMIN` |
+
+```bash
+# Encode private key to base64 (required for GitHub secrets)
+cat ~/.snowflake/rsa_key.p8 | base64 | pbcopy  # Copies to clipboard on macOS
+
+# Set secrets via CLI (key-pair auth)
+gh secret set SNOWFLAKE_ACCOUNT --body "xy12345.us-east-1"
+gh secret set SNOWFLAKE_USER --body "svc_devops_terraform"
+gh secret set SNOWFLAKE_PRIVATE_KEY < <(cat ~/.snowflake/rsa_key.p8 | base64)
+gh secret set SNOWFLAKE_WAREHOUSE --body "COMPUTE_WH"
+gh secret set SNOWFLAKE_DATABASE --body "MB_DEMO_DEV_ANALYTICS"
+gh secret set SNOWFLAKE_ROLE --body "ACCOUNTADMIN"
+```
+
+> **Note:** The GitHub workflows use password auth by default. For key-pair auth in CI/CD, you'll need to update the workflow files to decode the private key.
 
 ### 5.3 Configure GitHub Environments (Recommended)
 
@@ -360,31 +524,82 @@ Ensure these workflow files exist in `.github/workflows/`:
 
 ### 6.1 Deploy Infrastructure (Terraform)
 
+> ⚠️ **Important:** Each environment uses separate Terraform state. Deploy environments one at a time.
+
+#### Deploy Development Environment
+
 ```bash
-# From repository root
 cd terraform
 
-# Development
+# Load environment variables
+set -a && source ../.env && set +a
+
+# Plan first (review changes)
+terraform plan -var-file="environments/dev.tfvars"
+
+# Apply changes
 terraform apply -var-file="environments/dev.tfvars"
+# Type 'yes' to confirm
+```
 
-# Staging (after dev is verified)
+#### Deploy Staging Environment
+
+```bash
+# Plan staging
+terraform plan -var-file="environments/staging.tfvars"
+
+# Apply staging (after dev is verified)
 terraform apply -var-file="environments/staging.tfvars"
+```
 
-# Production (use with caution!)
+#### Deploy Production Environment
+
+```bash
+# Plan production
+terraform plan -var-file="environments/prod.tfvars"
+
+# Apply production (use with caution!)
 terraform apply -var-file="environments/prod.tfvars"
 ```
 
 ### 6.2 Deploy Database Objects (SQL)
 
+Database objects must be deployed to each environment separately.
+
+#### Deploy to Development
+
 ```bash
-# Go back to repo root
-cd ..
-
-# Activate virtual environment (if not active)
+cd /Users/ffoo/mb-snowflake-devops-demo
 source venv/bin/activate
+set -a && source .env && set +a
 
-# Set environment variables
+# Set environment
 export ENVIRONMENT=dev
+export SNOWFLAKE_DATABASE=MB_DEMO_DEV_ANALYTICS
+export DRY_RUN=false
+
+# Run deployment
+python scripts/deploy_objects.py
+```
+
+#### Deploy to Staging
+
+```bash
+# Set staging environment
+export ENVIRONMENT=staging
+export SNOWFLAKE_DATABASE=MB_DEMO_STAGING_ANALYTICS
+export DRY_RUN=false
+
+# Run deployment
+python scripts/deploy_objects.py
+```
+
+#### Deploy to Production
+
+```bash
+# Set production environment
+export ENVIRONMENT=prod
+export SNOWFLAKE_DATABASE=MB_DEMO_PROD_ANALYTICS
 export DRY_RUN=false
 
 # Run deployment
@@ -393,33 +608,66 @@ python scripts/deploy_objects.py
 
 ### 6.3 Verify Deployment in Snowflake
 
+#### Verify Development Environment
+
 ```sql
--- Run in Snowflake Worksheet
+-- Check dev databases
+SHOW DATABASES LIKE 'MB_DEMO_DEV%';
 
--- Check databases
-SHOW DATABASES LIKE 'MB_DEMO%';
-
--- Check schemas
+-- Check dev schemas
 USE DATABASE MB_DEMO_DEV_ANALYTICS;
 SHOW SCHEMAS;
 
--- Check tables
-USE SCHEMA RAW;
-SHOW TABLES;
+-- Check tables and views
+SHOW TABLES IN SCHEMA RAW;
+SHOW TABLES IN SCHEMA TRANSFORMED;
+SHOW TABLES IN SCHEMA MARTS;
+SHOW VIEWS IN SCHEMA MARTS;
 
-USE SCHEMA TRANSFORMED;
-SHOW TABLES;
-
-USE SCHEMA MARTS;
-SHOW TABLES;
-SHOW VIEWS;
-
--- Check warehouses
-SHOW WAREHOUSES LIKE 'MB_DEMO%';
-
--- Check roles
-SHOW ROLES LIKE 'MB_DEMO%';
+-- Check warehouses and roles
+SHOW WAREHOUSES LIKE 'MB_DEMO_DEV%';
+SHOW ROLES LIKE 'MB_DEMO_DEV%';
 ```
+
+#### Verify Staging Environment
+
+```sql
+-- Check staging databases
+SHOW DATABASES LIKE 'MB_DEMO_STAGING%';
+
+USE DATABASE MB_DEMO_STAGING_ANALYTICS;
+SHOW SCHEMAS;
+SHOW TABLES IN SCHEMA MARTS;
+SHOW VIEWS IN SCHEMA MARTS;
+
+SHOW WAREHOUSES LIKE 'MB_DEMO_STAGING%';
+SHOW ROLES LIKE 'MB_DEMO_STAGING%';
+```
+
+#### Verify Production Environment
+
+```sql
+-- Check prod databases
+SHOW DATABASES LIKE 'MB_DEMO_PROD%';
+
+USE DATABASE MB_DEMO_PROD_ANALYTICS;
+SHOW SCHEMAS;
+SHOW TABLES IN SCHEMA MARTS;
+SHOW VIEWS IN SCHEMA MARTS;
+
+SHOW WAREHOUSES LIKE 'MB_DEMO_PROD%';
+SHOW ROLES LIKE 'MB_DEMO_PROD%';
+```
+
+### 6.4 Environment Summary
+
+After deploying all environments, you should have:
+
+| Environment | Database | Warehouse | Roles |
+|-------------|----------|-----------|-------|
+| **Dev** | `MB_DEMO_DEV_ANALYTICS` | `MB_DEMO_DEV_ANALYTICS_WH`, `MB_DEMO_DEV_ETL_WH` | `MB_DEMO_DEV_ANALYST`, `MB_DEMO_DEV_ENGINEER`, `MB_DEMO_DEV_ADMIN` |
+| **Staging** | `MB_DEMO_STAGING_ANALYTICS` | `MB_DEMO_STAGING_ANALYTICS_WH`, `MB_DEMO_STAGING_ETL_WH` | `MB_DEMO_STAGING_ANALYST`, `MB_DEMO_STAGING_ENGINEER`, `MB_DEMO_STAGING_ADMIN` |
+| **Prod** | `MB_DEMO_PROD_ANALYTICS` | `MB_DEMO_PROD_ANALYTICS_WH`, `MB_DEMO_PROD_ETL_WH` | `MB_DEMO_PROD_ANALYST`, `MB_DEMO_PROD_ENGINEER`, `MB_DEMO_PROD_ADMIN` |
 
 ---
 
@@ -428,10 +676,10 @@ SHOW ROLES LIKE 'MB_DEMO%';
 ### 7.1 Test the Analytical Views
 
 ```sql
--- Set context
+-- Set context (use your configured warehouse, e.g., COMPUTE_WH)
 USE DATABASE MB_DEMO_DEV_ANALYTICS;
 USE SCHEMA MARTS;
-USE WAREHOUSE MB_DEMO_DEV_ANALYTICS_WH;
+USE WAREHOUSE COMPUTE_WH;  -- Or MB_DEMO_DEV_ANALYTICS_WH if created by Terraform
 
 -- Test views (they'll be empty until data is loaded)
 SELECT * FROM VW_REALTIME_TRANSACTIONS LIMIT 10;
@@ -442,7 +690,13 @@ SELECT * FROM VW_DAILY_KPI LIMIT 10;
 
 ### 7.2 Load Sample Data (Optional)
 
+Load sample data to test the data pipeline:
+
 ```sql
+-- Set context
+USE DATABASE MB_DEMO_DEV_ANALYTICS;
+USE WAREHOUSE COMPUTE_WH;
+
 -- Insert sample transaction data
 INSERT INTO RAW.CUSTOMER_TRANSACTIONS_RAW 
 (record_id, transaction_id, customer_id, transaction_date, transaction_type, 
@@ -458,6 +712,10 @@ INSERT INTO RAW.CUSTOMER_PROFILE_RAW
 VALUES
 ('CP001', 'C001', 'John Doe', 'Individual', 'Premium', '2023-01-01', 'ACTIVE', 'LOW'),
 ('CP002', 'C002', 'Jane Smith', 'Individual', 'Standard', '2023-06-15', 'ACTIVE', 'MEDIUM');
+
+-- Verify data was inserted
+SELECT COUNT(*) FROM RAW.CUSTOMER_TRANSACTIONS_RAW;
+SELECT COUNT(*) FROM RAW.CUSTOMER_PROFILE_RAW;
 ```
 
 ### 7.3 Test Stored Procedure
@@ -468,6 +726,19 @@ CALL MARTS.SP_REFRESH_CUSTOMER_360();
 
 -- Verify results
 SELECT * FROM MARTS.CUSTOMER_360;
+```
+
+### 7.4 Test Streams and Tasks (Optional)
+
+```sql
+-- Check streams have captured changes
+SELECT * FROM RAW.TRANSACTIONS_STREAM;
+SELECT * FROM RAW.CUSTOMER_PROFILE_STREAM;
+
+-- Note: Tasks are created SUSPENDED by default
+-- To enable automatic processing, run:
+-- ALTER TASK TRANSFORMED.PROCESS_TRANSACTIONS_TASK RESUME;
+-- ALTER TASK TRANSFORMED.UPDATE_DAILY_SUMMARY_TASK RESUME;
 ```
 
 ### 7.4 Test CI/CD Pipeline
@@ -521,23 +792,18 @@ Error: 250001: Could not connect to Snowflake backend
 **Solution:**
 1. Verify account identifier format
 2. Check network connectivity to Snowflake
-3. Verify username/password
-4. Check if your IP is allowed (network policies)
+3. Verify key-pair authentication is configured correctly
+4. Ensure `SNOWFLAKE_AUTHENTICATOR=JWT` is set
+5. Check if your IP is allowed (network policies)
 
 ```bash
-# Test connection
-python3 << 'EOF'
-import snowflake.connector
-import os
+# Verify environment variables are set
+echo "SNOWFLAKE_ACCOUNT=$SNOWFLAKE_ACCOUNT"
+echo "SNOWFLAKE_AUTHENTICATOR=$SNOWFLAKE_AUTHENTICATOR"
+echo "SNOWFLAKE_PRIVATE_KEY_PATH=$SNOWFLAKE_PRIVATE_KEY_PATH"
 
-conn = snowflake.connector.connect(
-    account=os.environ['SNOWFLAKE_ACCOUNT'],
-    user=os.environ['SNOWFLAKE_USER'],
-    password=os.environ['SNOWFLAKE_PASSWORD']
-)
-print("✅ Connection successful!")
-conn.close()
-EOF
+# Reload environment if needed
+set -a && source .env && set +a
 ```
 
 #### Issue: GitHub Actions fails with "secret not found"
@@ -575,26 +841,87 @@ USE ROLE ACCOUNTADMIN;
 ## Quick Reference Commands
 
 ```bash
-# Terraform
+# Initial Setup (run once)
+cd /Users/ffoo/mb-snowflake-devops-demo
+source venv/bin/activate
+set -a && source .env && set +a
+
+# Terraform Commands
 make init                 # Initialize Terraform
 make plan                 # Plan dev environment
 make plan-staging         # Plan staging environment
+make plan-prod            # Plan prod environment
 make apply                # Apply dev environment
+make apply-staging        # Apply staging environment
+make apply-prod           # Apply prod environment
 make destroy              # Destroy dev environment
 make fmt                  # Format Terraform files
 make validate             # Validate configuration
 
-# SQL Objects
+# Direct Terraform (alternative to make)
+cd terraform
+terraform init
+terraform plan -var-file="environments/dev.tfvars"
+terraform apply -var-file="environments/dev.tfvars"
+
+# SQL Objects Deployment
 make deploy-objects       # Deploy Snowflake objects
 make lint                 # Lint SQL files
 
-# Python Setup
+# Or run directly
+python scripts/deploy_objects.py
+
+# Python Setup (run once)
 make setup                # Setup Python virtual environment
 
 # GitHub Workflows (via CLI)
 gh workflow run "Terraform Apply" --field environment=dev
 gh workflow run "Deploy Snowflake Objects" --field environment=dev --field dry_run=true
+
+# Git Commands
+git status
+gh pr list
+gh run list
 ```
+
+---
+
+## 9. Deployment Checklist
+
+Use this checklist to ensure each environment is fully deployed:
+
+### Development Environment ✅
+
+- [ ] Terraform applied: `terraform apply -var-file="environments/dev.tfvars"`
+- [ ] SQL objects deployed: `ENVIRONMENT=dev python scripts/deploy_objects.py`
+- [ ] Verified databases: `SHOW DATABASES LIKE 'MB_DEMO_DEV%'`
+- [ ] Verified schemas: RAW, TRANSFORMED, MARTS exist
+- [ ] Verified tables and views created
+- [ ] Sample data loaded (optional)
+- [ ] Stored procedure tested
+
+### Staging Environment ✅
+
+- [ ] Terraform applied: `terraform apply -var-file="environments/staging.tfvars"`
+- [ ] SQL objects deployed: `ENVIRONMENT=staging python scripts/deploy_objects.py`
+- [ ] Verified databases: `SHOW DATABASES LIKE 'MB_DEMO_STAGING%'`
+- [ ] Verified all objects created
+
+### Production Environment ✅
+
+- [ ] Terraform applied: `terraform apply -var-file="environments/prod.tfvars"`
+- [ ] SQL objects deployed: `ENVIRONMENT=prod python scripts/deploy_objects.py`
+- [ ] Verified databases: `SHOW DATABASES LIKE 'MB_DEMO_PROD%'`
+- [ ] Verified all objects created
+- [ ] Tasks enabled (if needed): `ALTER TASK ... RESUME`
+
+### CI/CD Pipeline ✅
+
+- [ ] GitHub repository created
+- [ ] GitHub secrets configured
+- [ ] GitHub environments created (development, staging, production)
+- [ ] Protection rules set for staging/production
+- [ ] Test PR created and workflows verified
 
 ---
 
@@ -605,6 +932,17 @@ gh workflow run "Deploy Snowflake Objects" --field environment=dev --field dry_r
 3. 🔐 Set up key-pair authentication for production
 4. 🛡️ Configure GitHub environment protection rules
 5. 📊 Load your data and start using the analytics views
+6. 🔄 Test the CI/CD pipeline with a sample PR
+
+---
+
+## 📖 Related Documentation
+
+| Document | Description |
+|----------|-------------|
+| [DEMO_GUIDE.md](DEMO_GUIDE.md) | Presentation script for demos |
+| [README.md](README.md) | Project overview |
+| `terraform/environments/*.tfvars` | Environment configurations |
 
 ---
 

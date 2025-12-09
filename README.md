@@ -40,7 +40,7 @@ mb-snowflake-devops-demo/
 │   └── snowflake-objects.yml       # Database object deployment
 │
 ├── snowflake/                      # Snowflake Objects
-│   ├── migrations/                 # Version-controlled migrations
+│   ├── ddl/                        # Version-controlled DDL scripts
 │   │   ├── V001__initial_schema_setup.sql
 │   │   └── V002__create_streams_and_tasks.sql
 │   └── objects/
